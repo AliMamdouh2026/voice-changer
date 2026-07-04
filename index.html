@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>مغير الصوت التجريبي</title>
+    <title>مغير الصوت الاحترافي</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -51,8 +52,8 @@
 <body>
 
 <div class="container">
-    <h2>تغيير الصوت (ولد ⬅️ بنت)</h2>
-    <p>اضغط تسجيل وتكلم بصوتك الطبيعي، ثم اضغط إيقاف لسماع الصوت المعدل</p>
+    <h2>تغيير الصوت الذكي (ولد ⬅️ بنت)</h2>
+    <p>الكلام هيفضل بسرعته الطبيعية لكن النبرة هتتحول لصوت بنت</p>
     
     <div id="status" class="status">جاهز للتسجيل...</div>
     
@@ -80,15 +81,15 @@
             mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
             
             mediaRecorder.onstop = async () => {
-                statusDiv.textContent = "جاري تحويل طبقة الصوت إلى فتاة...";
+                statusDiv.textContent = "جاري تعديل خامة ونبرة الصوت بالذكاء الاصطناعي...";
                 const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                await processAndChangePitch(audioBlob);
+                await processVoice(audioBlob);
             };
 
             mediaRecorder.start();
             startBtn.disabled = true;
             stopBtn.disabled = false;
-            statusDiv.textContent = "🔴 جاري التسجيل الآن... تكلم";
+            statusDiv.textContent = "🔴 جاري التسجيل الآن... تكلم بطبيعتك";
         } catch (err) {
             statusDiv.textContent = "يرجى السماح بصلاحية المايك لتجربة التطبيق";
         }
@@ -100,61 +101,48 @@
         stopBtn.disabled = true;
     };
 
-    async function processAndChangePitch(blob) {
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    async function processVoice(blob) {
         const arrayBuffer = await blob.arrayBuffer();
-        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-        // نسبة 1.45 تقوم برفع طبقة الصوت لتتحول من خشن (رجل) إلى ناعم (فتاة)
-        const playRate = 1.45; 
-
-        const offlineCtx = new OfflineAudioContext(
-            audioBuffer.numberOfChannels,
-            audioBuffer.length / playRate,
-            audioBuffer.sampleRate
-        );
-
-        const bufferSource = offlineCtx.createBufferSource();
-        bufferSource.buffer = audioBuffer;
-        bufferSource.playbackRate.value = playRate;
-
-        bufferSource.connect(offlineCtx.destination);
-        bufferSource.start();
-
-        const renderedBuffer = await offlineCtx.startRendering();
-        const wavBlob = bufferToWav(renderedBuffer);
-        const audioUrl = URL.createObjectURL(wavBlob);
         
-        audioPlayback.src = audioUrl;
-        statusDiv.textContent = "✅ تم التحويل! اضغط تشغيل في الأسفل";
-    }
+        // تحويل الملف لـ AudioBuffer مخصص للمكتبة
+        const toneBuffer = new Tone.ToneAudioBuffer();
+        await toneBuffer.load(URL.createObjectURL(blob));
 
-    function bufferToWav(buffer) {
-        let numOfChan = buffer.numberOfChannels,
-            length = buffer.length * numOfChan * 2 + 44,
-            bufferArr = new ArrayBuffer(length),
-            view = new DataView(bufferArr),
-            channels = [], i, sample, offset = 0, pos = 0;
+        // إنشاء مشغل الصوت
+        const player = new Tone.Player(toneBuffer);
 
-        function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
-        function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+        // أهم خطوة: فلتر الـ Pitch Shift لرفع حدة الصوت بدون تسريع
+        // الرقم 6 أو 7 مثالي لرفع صوت الرجل لطبقة صوت فتاة ناعمة وطبيعية
+        const pitchShift = new Tone.PitchShift({
+            pitch: 6.5 
+        });
 
-        setUint32(0x46464952); setUint32(length - 8); setUint32(0x45564157);
-        setUint32(0x20746d66); setUint32(16); setUint16(1); setUint16(numOfChan);
-        setUint32(buffer.sampleRate); setUint32(buffer.sampleRate * 2 * numOfChan);
-        setUint16(numOfChan * 2); setUint16(16); setUint32(0x61746164); setUint32(length - pos - 4);
+        // توصيل الفلتر بالخارج لتسجيل النتيجة
+        const actx = Tone.getContext().rawContext;
+        const dest = actx.createMediaStreamDestination();
+        
+        Tone.connect(player, pitchShift);
+        pitchShift.connect(dest);
 
-        for (i = 0; i < buffer.numberOfChannels; i++) channels.push(buffer.getChannelData(i));
+        // تسجيل الصوت المعدل الجديد
+        const recorder = new MediaRecorder(dest.stream);
+        const chunks = [];
+        recorder.ondataavailable = e => chunks.push(e.data);
+        
+        recorder.onstop = () => {
+            const convertedBlob = new Blob(chunks, { type: 'audio/wav' });
+            audioPlayback.src = URL.createObjectURL(convertedBlob);
+            statusDiv.textContent = "✅ جاهز! اسمع صوت البنت الآن بدون تسريع للكلام";
+        };
 
-        while (pos < length) {
-            for (i = 0; i < numOfChan; i++) {
-                sample = Math.max(-1, Math.min(1, channels[i][offset]));
-                sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                view.setInt16(pos, sample, true); pos += 2;
-            }
-            offset++;
-        }
-        return new Blob([bufferArr], { type: 'audio/wav' });
+        recorder.start();
+        player.start();
+        
+        // إيقاف التسجيل فور انتهاء الريكورد
+        setTimeout(() => {
+            recorder.stop();
+            player.stop();
+        }, toneBuffer.duration * 1000 + 200);
     }
 </script>
 
