@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مغير الصوت التجريبي</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f0f4f8;
+            padding: 40px 15px;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 30px 20px;
+            border-radius: 24px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        h2 { color: #1e293b; margin-bottom: 10px; }
+        p { color: #64748b; font-size: 14px; margin-bottom: 30px; }
+        button {
+            color: white;
+            border: none;
+            padding: 16px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 14px;
+            cursor: pointer;
+            margin-bottom: 12px;
+            width: 100%;
+            transition: 0.2s;
+        }
+        #startBtn { background-color: #2563eb; }
+        #stopBtn { background-color: #dc3545; }
+        button:disabled { background-color: #cbd5e1; cursor: not-allowed; }
+        .status {
+            margin: 20px 0;
+            font-weight: 600;
+            color: #475569;
+            padding: 10px;
+            border-radius: 10px;
+            background: #f8fafc;
+        }
+        audio { width: 100%; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>تغيير الصوت (ولد ⬅️ بنت)</h2>
+    <p>اضغط تسجيل وتكلم بصوتك الطبيعي، ثم اضغط إيقاف لسماع الصوت المعدل</p>
+    
+    <div id="status" class="status">جاهز للتسجيل...</div>
+    
+    <button id="startBtn">🎤 ابدأ التسجيل</button>
+    <button id="stopBtn" disabled>⏹️ إيقاف ومعالجة الصوت</button>
+    
+    <audio id="audioPlayback" controls></audio>
+</div>
+
+<script>
+    let mediaRecorder;
+    let audioChunks = [];
+
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const statusDiv = document.getElementById("status");
+    const audioPlayback = document.getElementById("audioPlayback");
+
+    startBtn.onclick = async () => {
+        audioChunks = [];
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+            
+            mediaRecorder.onstop = async () => {
+                statusDiv.textContent = "جاري تحويل طبقة الصوت إلى فتاة...";
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                await processAndChangePitch(audioBlob);
+            };
+
+            mediaRecorder.start();
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            statusDiv.textContent = "🔴 جاري التسجيل الآن... تكلم";
+        } catch (err) {
+            statusDiv.textContent = "يرجى السماح بصلاحية المايك لتجربة التطبيق";
+        }
+    };
+
+    stopBtn.onclick = () => {
+        mediaRecorder.stop();
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+    };
+
+    async function processAndChangePitch(blob) {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const arrayBuffer = await blob.arrayBuffer();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+        // نسبة 1.45 تقوم برفع طبقة الصوت لتتحول من خشن (رجل) إلى ناعم (فتاة)
+        const playRate = 1.45; 
+
+        const offlineCtx = new OfflineAudioContext(
+            audioBuffer.numberOfChannels,
+            audioBuffer.length / playRate,
+            audioBuffer.sampleRate
+        );
+
+        const bufferSource = offlineCtx.createBufferSource();
+        bufferSource.buffer = audioBuffer;
+        bufferSource.playbackRate.value = playRate;
+
+        bufferSource.connect(offlineCtx.destination);
+        bufferSource.start();
+
+        const renderedBuffer = await offlineCtx.startRendering();
+        const wavBlob = bufferToWav(renderedBuffer);
+        const audioUrl = URL.createObjectURL(wavBlob);
+        
+        audioPlayback.src = audioUrl;
+        statusDiv.textContent = "✅ تم التحويل! اضغط تشغيل في الأسفل";
+    }
+
+    function bufferToWav(buffer) {
+        let numOfChan = buffer.numberOfChannels,
+            length = buffer.length * numOfChan * 2 + 44,
+            bufferArr = new ArrayBuffer(length),
+            view = new DataView(bufferArr),
+            channels = [], i, sample, offset = 0, pos = 0;
+
+        function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
+        function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+
+        setUint32(0x46464952); setUint32(length - 8); setUint32(0x45564157);
+        setUint32(0x20746d66); setUint32(16); setUint16(1); setUint16(numOfChan);
+        setUint32(buffer.sampleRate); setUint32(buffer.sampleRate * 2 * numOfChan);
+        setUint16(numOfChan * 2); setUint16(16); setUint32(0x61746164); setUint32(length - pos - 4);
+
+        for (i = 0; i < buffer.numberOfChannels; i++) channels.push(buffer.getChannelData(i));
+
+        while (pos < length) {
+            for (i = 0; i < numOfChan; i++) {
+                sample = Math.max(-1, Math.min(1, channels[i][offset]));
+                sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                view.setInt16(pos, sample, true); pos += 2;
+            }
+            offset++;
+        }
+        return new Blob([bufferArr], { type: 'audio/wav' });
+    }
+</script>
+
+</body>
+</html>
